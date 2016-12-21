@@ -80,13 +80,36 @@ module Xcode
         end
 
         def install_dmg
+          temp_pkg_dir = ::File.join(Chef::Config[:file_cache_path], "Xcode_#{new_resource.version}")
+          temp_pkg_file = ::File.join(temp_pkg_dir, ::File.basename(new_resource.url))
+
+          directory temp_pkg_dir do
+            recursive true
+          end
+
           dmg_package new_resource.app do
             source new_resource.url
             checksum new_resource.checksum
             dmg_name ::File.basename(new_resource.url, '.dmg')
             owner 'root'
             type 'app'
+            destination temp_pkg_dir
             action :install
+          end
+
+            execute "mv -f #{temp_pkg_dir}/Xcode.app #{install_dir}" do
+              only_if { Dir.exist?("#{temp_pkg_dir}/Xcode.app") }
+            end
+
+#          if new_resource.multi_install || !new_resource.install_root.eql?('/Applications')
+#            ::File.rename("#{temp_pkg_dir}/Xcode.app", install_dir)
+#          end
+
+          # Clean up temp
+          directory temp_pkg_dir do
+            recursive true
+            action :delete
+            only_if { Dir.exists?(temp_pkg_dir) }
           end
         end
 
@@ -94,9 +117,6 @@ module Xcode
         def post_install
           ruby_block 'Xcode post install' do
             block do
-              if new_resource.multi_install || !new_resource.install_root.eql?('/Applications')
-                ::File.rename('/Applications/Xcode.app', install_dir)
-              end
               # Install any additional packages hiding in the Xcode installation path
               xcode_packages =
                 ::Dir.entries("#{install_dir}/Contents/Resources/Packages/").select { |f| !::File.directory? f }
@@ -105,11 +125,15 @@ module Xcode
                   command "sudo installer -pkg #{install_dir}/Contents/Resources/Packages/#{pkg} -target /"
                 end
               end unless xcode_packages.nil?
+            end
+            only_if { ::Dir.exist?(install_dir) }
+
+            block do
               execute 'xcode-select' do
-                command "xcode-select -s #{install_dir}/Contents/Developer"
+                command "xcode-select -s /Applications/Xcode.app/Contents/Developer"
               end
             end
-            only_if { ::Dir.exist?('/Applications/Xcode.app') }
+            only_if { ::Dir.exist?('Applications/Xcode.app') }
           end
         end
 
